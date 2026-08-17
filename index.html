@@ -1136,11 +1136,31 @@ function parseGermanNumber(v){
   }
   return parseFloat(s);
 }
-function parseDateCell(v){
+// Erkennt automatisch, ob eine Datumsspalte TT/MM/JJJJ (europäisch) oder MM/TT/JJJJ (US) ist
+function inferDateOrder(rows,key){
+  let dmy=false,mdy=false;
+  for(const r of rows){
+    const m=String(r[key]).trim().match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})/);
+    if(!m)continue;
+    const a=+m[1],b=+m[2];
+    if(a>12)dmy=true;   // erste Zahl >12 → muss Tag sein
+    if(b>12)mdy=true;   // zweite Zahl >12 → Tag steht hinten, Monat vorne
+  }
+  if(mdy&&!dmy)return 'mdy';
+  return 'dmy'; // Standard: europäisch (auch bei Konflikt/kein Signal)
+}
+function parseDateCell(v,order){
   if(v instanceof Date)return v;
   const s=String(v).trim();
-  let m=s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})$/);
-  if(m){let y=+m[3];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[1]);}
+  let m=s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})/);
+  if(m){
+    let a=+m[1],b=+m[2],y=+m[3];if(y<100)y+=2000;
+    let day,mon;
+    if(order==='mdy'){mon=a;day=b;}else{day=a;mon=b;}
+    if(mon>12&&day<=12){const t=mon;mon=day;day=t;} // Sicherheitsnetz gegen Monat 31
+    if(mon<1||mon>12||day<1||day>31)return null;
+    return new Date(y,mon-1,day);
+  }
   m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if(m)return new Date(+m[1],+m[2]-1,+m[3]);
   const d=new Date(s);return isNaN(d)?null:d;
@@ -1174,8 +1194,9 @@ document.getElementById('confirmImport').onclick=async()=>{
     }
   }
   const recs=[];
+  const dateOrder=inferDateOrder(parsedRows,map.date);
   parsedRows.forEach(r=>{
-    const d=parseDateCell(r[map.date]),amt=parseGermanNumber(r[map.amount]);
+    const d=parseDateCell(r[map.date],dateOrder),amt=parseGermanNumber(r[map.amount]);
     if(!d||isNaN(amt))return;
     const acctId=bankCol?ensureAccountFor(String(r[bankCol]).trim()||'Unbekannt'):fixedAcct;
     const cp=String(map.cp?r[map.cp]:'').trim()||'Unbekannt';
