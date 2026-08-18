@@ -449,6 +449,7 @@ th.num .thwrap{justify-content:flex-end}
           <div class="maprow"><span>Datum</span><select data-map="date"></select></div>
           <div class="maprow"><span>Empfänger / Name</span><select data-map="cp"></select></div>
           <div class="maprow"><span>Verwendungszweck</span><select data-map="memo"></select></div>
+          <div class="maprow"><span>Typ / Buchungsart (optional)</span><select data-map="type"></select></div>
           <div class="maprow"><span>IBAN (optional)</span><select data-map="iban"></select></div>
           <div class="maprow"><span>Betrag</span><select data-map="amount"></select></div>
         </div>
@@ -1084,8 +1085,23 @@ function autoDetect(){
     cp:find('empfänger','empfaenger','beguenstigter','begünstigter','auftraggeber','name','zahlungspflichtiger','payee'),
     memo:find('verwendungszweck','verwendung','buchungstext','vwz','zweck','description','betreff'),
     amount:find('betrag','umsatz','amount','wert'),
+    type:find('buchungstyp','booking type','buchungsart','umsatzart','transaktionstyp','typ'),
     iban:find('iban'),
     bank:find('bank','konto','account')};
+}
+function normalizeType(t){
+  if(t==null)return '';
+  let s=String(t).replace(/\s+/g,' ').trim(); if(!s)return '';
+  const low=s.toLowerCase();
+  if(low.includes('echtzeit')&&(low.includes('berweis')||low.includes('ueberweis')))return 'Echtzeitüberweisung';
+  if(low.includes('echtzeit')&&low.includes('gutschr'))return 'Echtzeitgutschrift';
+  if(low.startsWith('ueberweis')||low.startsWith('überweis'))return 'Überweisung';
+  if(low.includes('gutschrift'))return 'SEPA-Gutschrift';
+  if(low.includes('lastschrift'))return 'Lastschrift';
+  if(low.includes('dauerauftrag'))return 'Dauerauftrag';
+  if(low.includes('aussenhandel')||low.includes('außenhandel'))return 'SEPA-Außenhandel';
+  if(low.includes('gebuehren')||low.includes('gebühren'))return 'Gebühren';
+  return s;
 }
 function showMap(){
   document.getElementById('mapArea').style.display='block';
@@ -1115,8 +1131,8 @@ function onBankColChange(){
 function renderPreview(){
   const map={};document.querySelectorAll('#mapArea select[data-map]').forEach(s=>map[s.dataset.map]=s.value);
   const bankCol=document.getElementById('bankColSelect').value;
-  const cols=bankCol?['bank','date','cp','memo','amount']:['date','cp','memo','amount'];
-  const labels={bank:'Konto',date:'Datum',cp:'Empfänger',memo:'Zweck',amount:'Betrag'};
+  const cols=bankCol?['bank','date','cp','type','memo','amount']:['date','cp','type','memo','amount'];
+  const labels={bank:'Konto',date:'Datum',cp:'Empfänger',type:'Typ',memo:'Zweck',amount:'Betrag'};
   const get=(r,c)=>c==='bank'?r[bankCol]:(map[c]?r[map[c]]:'');
   let html='<tr>'+cols.map(c=>`<th>${labels[c]}</th>`).join('')+'</tr>';
   parsedRows.slice(0,4).forEach(r=>{html+='<tr>'+cols.map(c=>`<td>${esc(String(get(r,c)))}</td>`).join('')+'</tr>';});
@@ -1200,7 +1216,7 @@ document.getElementById('confirmImport').onclick=async()=>{
     if(!d||isNaN(amt))return;
     const acctId=bankCol?ensureAccountFor(String(r[bankCol]).trim()||'Unbekannt'):fixedAcct;
     const cp=String(map.cp?r[map.cp]:'').trim()||'Unbekannt';
-    recs.push({account_id:acctId,date:isoDate(d),counterparty:cp,type:'',memo:String(map.memo?r[map.memo]:'').trim(),amount:amt,iban:String(map.iban?r[map.iban]:'').replace(/\s+/g,'').trim(),internal:isInternal(cp)});
+    recs.push({account_id:acctId,date:isoDate(d),counterparty:cp,type:normalizeType(map.type?r[map.type]:''),memo:String(map.memo?r[map.memo]:'').trim(),amount:amt,iban:String(map.iban?r[map.iban]:'').replace(/\s+/g,'').trim(),internal:isInternal(cp)});
   });
   if(!recs.length){status.textContent='Keine gültigen Zeilen gefunden.';return;}
   const btn=document.getElementById('confirmImport'); btn.disabled=true;
