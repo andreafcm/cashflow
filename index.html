@@ -51,6 +51,7 @@ h1,h2,h3{margin:0;font-weight:650}
 .btn:hover{border-color:var(--baseline)}
 .btn.primary{background:var(--brand-teal);color:#063a63;border-color:transparent;font-weight:700}
 .btn.primary:hover{filter:brightness(1.06)}
+.btn.ghost.toggled{background:var(--brand-teal);border-color:transparent;color:#063a63;font-weight:700}
 .btn.ghost{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.22);color:#fff}
 .btn.ghost:hover{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.35)}
 .icon{width:16px;height:16px;display:inline-block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -301,6 +302,12 @@ th.num .thwrap{justify-content:flex-end}
   <div class="spacer"></div>
   <button class="btn ghost" id="themeBtn" title="Design wechseln">
     <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v1M12 20v1M4.2 4.2l.7.7M19.1 19.1l.7.7M3 12h1M20 12h1M4.2 19.8l.7-.7M19.1 4.9l.7-.7"/><circle cx="12" cy="12" r="4"/></svg>
+  </button>
+  <button class="btn ghost" id="hideIntBtn" title="Interne Umbuchungen aus Liste & Dashboard ausblenden">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M17.9 17.9A10.4 10.4 0 0112 20C5 20 1 12 1 12a19 19 0 015.1-6M9.9 4.2A10.9 10.9 0 0112 4c7 0 11 8 11 8a19 19 0 01-2.2 3.2M1 1l22 22M9.5 9.5a3 3 0 004.2 4.2"/></svg>Interne ausblenden
+  </button>
+  <button class="btn ghost" id="syncBtn" title="Von den Banken aktualisieren (finAPI)">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-2.6-6.4M21 4v4h-4"/></svg>Aktualisieren
   </button>
   <button class="btn primary" id="importBtn">
     <svg class="icon" viewBox="0 0 24 24"><path d="M12 15V3M8 7l4-4 4 4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Excel importieren
@@ -560,8 +567,10 @@ function inRange(t,range,cs,ce){
   if(range==='custom'){ if(cs&&t.date<cs)return false; if(ce&&t.date>ce)return false; return true; }
   return (NOW-t.date)/86400000<=Number(range);
 }
+let hideInternal=false; // oculta transacciones internas en lista y dashboard
 function ovFiltered(){
   return transactions.filter(t=>{
+    if(hideInternal&&t.internal)return false;
     if(!ovAccts.has(t.accountId))return false;
     if(ovDir==='in'&&t.amount<=0)return false;
     if(ovDir==='out'&&t.amount>=0)return false;
@@ -600,6 +609,7 @@ function updateSortArrows(){
 let NOW=new Date();
 function currentFiltered(){
   return transactions.filter(t=>{
+    if(hideInternal&&t.internal)return false;
     if(!activeAccts.has(t.accountId))return false;
     if(dirFilter==='in'&&t.amount<=0)return false;
     if(dirFilter==='out'&&t.amount>=0)return false;
@@ -815,8 +825,14 @@ function renderOverview(){
   const tt=document.createElement('div'); tt.className='tile total';
   tt.innerHTML=`<div class="lab">Gesamtsaldo · ${incl.length} von ${accounts.length} Konten</div>
     <div class="val tnum">${money(total)}</div>
-    <div class="meta"><span class="up">Eingänge ${fmtEUR0.format(totalIn)}</span><span class="dn">Ausgänge ${fmtEUR0.format(totalOut)}</span></div>`;
+    <div class="meta"><span class="up">Eingänge ${fmtEUR0.format(totalIn)}</span><span class="dn">Ausgänge ${fmtEUR0.format(totalOut)}</span></div>
+    <label class="inc" style="margin-top:11px;font-weight:600"><input type="checkbox" id="masterInc"> Alle Startsalden einbeziehen</label>`;
   grid.appendChild(tt);
+  const mi=document.getElementById('masterInc');
+  mi.checked=accounts.length>0&&accounts.every(a=>a.include);
+  mi.indeterminate=!mi.checked&&accounts.some(a=>a.include);
+  mi.onchange=()=>{const v=mi.checked;accounts.forEach(a=>a.include=v);renderOverview();
+    _sb.from('accounts').update({include_in_total:v}).not('id','is',null).then(({error})=>{if(error)toast('Speichern fehlgeschlagen: '+error.message);});};
   shown.forEach(a=>{
     const el=document.createElement('div'); el.className='tile';
     el.innerHTML=`<div class="lab"><span class="dot" style="background:${cssv(a.slot)}"></span><span class="nm" contenteditable data-acct="${a.id}">${esc(a.name)}</span></div>
@@ -1400,6 +1416,26 @@ async function doLogin(){
 document.getElementById('gLogin').onclick=doLogin;
 document.getElementById('gPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 document.getElementById('logoutBtn').onclick=async()=>{ await _sb.auth.signOut(); location.reload(); };
+document.getElementById('hideIntBtn').onclick=()=>{
+  hideInternal=!hideInternal;
+  const btn=document.getElementById('hideIntBtn');
+  btn.classList.toggle('toggled',hideInternal);
+  btn.lastChild.textContent = hideInternal?' Interne einblenden':' Interne ausblenden';
+  renderTx();
+  if(document.getElementById('view-ov').classList.contains('active')) renderOverview();
+};
+document.getElementById('syncBtn').onclick=async()=>{
+  const btn=document.getElementById('syncBtn'); btn.disabled=true; const old=btn.innerHTML; btn.innerHTML='Aktualisiere …';
+  try{
+    const {data,error}=await _sb.functions.invoke('finapi-sync',{body:{}});
+    if(error) throw error;
+    await loadFromDB(); buildTypeFilter(); renderChips(); renderTx();
+    if(document.getElementById('view-ov').classList.contains('active')) renderOverview();
+    const n=data&&data.synced?Object.values(data.synced).reduce((a,b)=>a+b,0):0;
+    toast('Aktualisiert · '+n.toLocaleString('de-DE')+' Buchungen geprüft');
+  }catch(e){ toast('Aktualisierung fehlgeschlagen: '+(e.message||e)); }
+  finally{ btn.disabled=false; btn.innerHTML=old; }
+};
 // resume existing session on load
 (async()=>{
   if(SUPABASE_URL.startsWith('__')){ document.getElementById('gErr').textContent='Konfiguration fehlt: SUPABASE_URL/KEY in der Datei eintragen.'; return; }
