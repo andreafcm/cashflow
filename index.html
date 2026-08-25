@@ -140,6 +140,14 @@ th.num .thwrap{justify-content:flex-end}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px;margin-bottom:18px}
 .panel h3{font-size:14px;margin-bottom:2px}
 .panel .psub{font-size:12px;color:var(--muted);margin-bottom:16px}
+.avg-val{font-size:30px;font-weight:800;letter-spacing:-.01em}
+.avg-lab{font-size:12.5px;color:var(--muted);margin-bottom:2px}
+.avg-sub{font-size:11.5px;color:var(--muted);margin-top:4px}
+.trend{display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:700;padding:8px 14px;border-radius:12px}
+.trend.up{color:var(--pos-text);background:rgba(18,161,80,.12)}
+.trend.down{color:var(--neg);background:rgba(166,3,17,.10)}
+:root[data-theme="dark"] .trend.down{background:rgba(240,117,124,.14)}
+.trend.flat{color:var(--muted);background:var(--surface-2)}
 .bars{display:flex;flex-direction:column;gap:12px}
 .barrow{display:grid;grid-template-columns:180px 1fr 130px;align-items:center;gap:12px}
 .barrow .name{font-size:13px;color:var(--ink-2);display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -383,6 +391,8 @@ th.num .thwrap{justify-content:flex-end}
     <div id="ovChipRow" class="filterbar" style="margin-top:-6px"></div>
 
     <div class="grid-tiles" id="ovKpi"></div>
+
+    <div class="panel" id="avgDailyCard" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px"></div>
 
     <div class="panel">
       <h3>Summen pro Jahr</h3>
@@ -806,11 +816,47 @@ function renderTypePie(list){
   legend.innerHTML=top.map(s=>`<div class="legrow"><span class="ld" style="background:${s.color}"></span>
     <span class="lname">${esc(s.name)}</span><span class="lval">${fmtVal(s.val)}</span><span class="lpct">${(s.val/total*100).toFixed(1)}%</span></div>`).join('');
 }
+function renderAvgDaily(){
+  // Ø Einnahmen/Tag der letzten 4 Wochen (28 Tage) vs. die 4 Wochen davor.
+  // Respetar cuentas seleccionadas (ovAccts) y "internas ocultas"; ventana fija.
+  const DAY=86400000, ref=new Date(NOW.getFullYear(),NOW.getMonth(),NOW.getDate());
+  const cur0=new Date(ref.getTime()-27*DAY), prev0=new Date(ref.getTime()-55*DAY), prev1=new Date(ref.getTime()-28*DAY);
+  let curInc=0, prevInc=0;
+  transactions.forEach(t=>{
+    if(t.amount<=0)return;
+    if(!ovAccts.has(t.accountId))return;
+    if(hideInternal&&t.internal)return;
+    const d=t.date;
+    if(d>=cur0&&d<=ref) curInc+=t.amount;
+    else if(d>=prev0&&d<=prev1) prevInc+=t.amount;
+  });
+  const curAvg=curInc/28, prevAvg=prevInc/28;
+  let chip;
+  if(prevAvg<=0 && curAvg<=0) chip=`<span class="trend flat">— keine Daten</span>`;
+  else if(prevAvg<=0) chip=`<span class="trend up">▲ neu</span>`;
+  else {
+    const pct=(curAvg-prevAvg)/prevAvg*100;
+    const cls=pct>0.5?'up':(pct<-0.5?'down':'flat');
+    const arr=pct>0.5?'▲':(pct<-0.5?'▼':'→');
+    chip=`<span class="trend ${cls}">${arr} ${pct>=0?'+':''}${pct.toFixed(1)}%</span>`;
+  }
+  document.getElementById('avgDailyCard').innerHTML=
+    `<div>
+       <div class="avg-lab">Ø Einnahmen pro Tag · letzte 4 Wochen</div>
+       <div class="avg-val tnum" style="color:var(--pos-text)">${money(curAvg)}</div>
+       <div class="avg-sub">${fmtEUR0.format(curInc)} in 28 Tagen · zuvor ${money(prevAvg)}/Tag</div>
+     </div>
+     <div style="text-align:right">
+       <div class="avg-lab">Tendenz ggü. den 4 Wochen davor</div>
+       ${chip}
+     </div>`;
+}
 function renderOverview(){
   renderOvChips();
   document.getElementById('ovScope').textContent=scopeLabel();
   const ovList=ovFiltered();
   renderKpi(ovList);
+  renderAvgDaily();
   renderYear(ovList);
   renderTypePie(ovList);
   renderCashflow(ovList);
