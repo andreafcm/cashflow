@@ -148,6 +148,13 @@ th.num .thwrap{justify-content:flex-end}
 .trend.down{color:var(--neg);background:rgba(166,3,17,.10)}
 :root[data-theme="dark"] .trend.down{background:rgba(240,117,124,.14)}
 .trend.flat{color:var(--muted);background:var(--surface-2)}
+.txavg{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:11px 16px;margin-bottom:14px;font-size:13px;color:var(--ink-2)}
+.txavg b{color:var(--pos-text);font-size:16px}
+.txavg .trend{font-size:13px;padding:5px 11px}
+.tl-readout{display:flex;align-items:baseline;gap:12px;min-height:40px;margin-bottom:6px}
+.tl-readout .tl-m{font-size:14px;color:var(--muted);font-weight:600}
+.tl-readout .tl-v{font-size:32px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.tlhit{cursor:crosshair}
 .bars{display:flex;flex-direction:column;gap:12px}
 .barrow{display:grid;grid-template-columns:180px 1fr 130px;align-items:center;gap:12px}
 .barrow .name{font-size:13px;color:var(--ink-2);display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -356,6 +363,7 @@ th.num .thwrap{justify-content:flex-end}
       </button>
     </div>
     <div id="chipRow" class="filterbar" style="margin-top:-6px"></div>
+    <div id="txAvg" class="txavg"></div>
     <div class="card">
       <table>
         <thead><tr>
@@ -413,6 +421,13 @@ th.num .thwrap{justify-content:flex-end}
       <h3>Cashflow im Zeitverlauf</h3>
       <div class="psub">Eingänge vs. Ausgänge pro Monat — berücksichtigt die Filter oben</div>
       <div id="cashflowChart"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Netto-Verlauf (Zeitleiste)</h3>
+      <div class="psub">Netto pro Monat — mit der Maus über die Linie fahren für die Details</div>
+      <div id="tlReadout" class="tl-readout"></div>
+      <div id="timeline"></div>
     </div>
 
     <div class="banner" id="ovBanner">
@@ -686,6 +701,7 @@ function renderTx(){
   document.getElementById('txCount').textContent=`${list.length.toLocaleString('de-DE')} Transaktion${list.length===1?'':'en'}${list.length>500?' · 500 angezeigt':''}`;
   document.getElementById('txSum').innerHTML=`Saldo der Auswahl: <b style="color:${sum>=0?'var(--pos-text)':'var(--neg)'}">${sum>=0?'+':''}${money(sum)}</b>`;
   if(typeof updateFunnels==='function')updateFunnels();
+  if(typeof renderTxAvg==='function')renderTxAvg();
 }
 
 /* ---------------- drawer ---------------- */
@@ -816,40 +832,84 @@ function renderTypePie(list){
   legend.innerHTML=top.map(s=>`<div class="legrow"><span class="ld" style="background:${s.color}"></span>
     <span class="lname">${esc(s.name)}</span><span class="lval">${fmtVal(s.val)}</span><span class="lpct">${(s.val/total*100).toFixed(1)}%</span></div>`).join('');
 }
-function renderAvgDaily(){
-  // Ø Einnahmen/Tag der letzten 4 Wochen (28 Tage) vs. die 4 Wochen davor.
-  // Respetar cuentas seleccionadas (ovAccts) y "internas ocultas"; ventana fija.
-  const DAY=86400000, ref=new Date(NOW.getFullYear(),NOW.getMonth(),NOW.getDate());
-  const cur0=new Date(ref.getTime()-27*DAY), prev0=new Date(ref.getTime()-55*DAY), prev1=new Date(ref.getTime()-28*DAY);
+// Ø Einnahmen/Tag de las últimas 4 semanas (28 días) vs. las 4 semanas anteriores.
+// Ventana fija desde la fecha más reciente; respeta el set de cuentas y "internas ocultas".
+function avgDailyStats(acctSet){
+  const DAY=86400000, refT=new Date(NOW.getFullYear(),NOW.getMonth(),NOW.getDate()).getTime();
+  const cur0=refT-27*DAY, prev0=refT-55*DAY, prev1=refT-28*DAY;
   let curInc=0, prevInc=0;
   transactions.forEach(t=>{
     if(t.amount<=0)return;
-    if(!ovAccts.has(t.accountId))return;
+    if(!acctSet.has(t.accountId))return;
     if(hideInternal&&t.internal)return;
-    const d=t.date;
-    if(d>=cur0&&d<=ref) curInc+=t.amount;
+    const d=t.date.getTime();
+    if(d>=cur0&&d<=refT) curInc+=t.amount;
     else if(d>=prev0&&d<=prev1) prevInc+=t.amount;
   });
   const curAvg=curInc/28, prevAvg=prevInc/28;
-  let chip;
-  if(prevAvg<=0 && curAvg<=0) chip=`<span class="trend flat">— keine Daten</span>`;
-  else if(prevAvg<=0) chip=`<span class="trend up">▲ neu</span>`;
-  else {
-    const pct=(curAvg-prevAvg)/prevAvg*100;
-    const cls=pct>0.5?'up':(pct<-0.5?'down':'flat');
-    const arr=pct>0.5?'▲':(pct<-0.5?'▼':'→');
-    chip=`<span class="trend ${cls}">${arr} ${pct>=0?'+':''}${pct.toFixed(1)}%</span>`;
-  }
+  let pct=null,cls='flat',arr='→';
+  if(prevAvg>0){pct=(curAvg-prevAvg)/prevAvg*100;cls=pct>0.5?'up':(pct<-0.5?'down':'flat');arr=pct>0.5?'▲':(pct<-0.5?'▼':'→');}
+  return {curInc,curAvg,prevAvg,pct,cls,arr};
+}
+function trendChip(s){
+  if(s.prevAvg<=0&&s.curAvg<=0)return `<span class="trend flat">— keine Daten</span>`;
+  if(s.prevAvg<=0)return `<span class="trend up">▲ neu</span>`;
+  return `<span class="trend ${s.cls}">${s.arr} ${s.pct>=0?'+':''}${s.pct.toFixed(1)}%</span>`;
+}
+function renderAvgDaily(){
+  const s=avgDailyStats(ovAccts);
   document.getElementById('avgDailyCard').innerHTML=
     `<div>
        <div class="avg-lab">Ø Einnahmen pro Tag · letzte 4 Wochen</div>
-       <div class="avg-val tnum" style="color:var(--pos-text)">${money(curAvg)}</div>
-       <div class="avg-sub">${fmtEUR0.format(curInc)} in 28 Tagen · zuvor ${money(prevAvg)}/Tag</div>
+       <div class="avg-val tnum" style="color:var(--pos-text)">${money(s.curAvg)}</div>
+       <div class="avg-sub">${fmtEUR0.format(s.curInc)} in 28 Tagen · zuvor ${money(s.prevAvg)}/Tag</div>
      </div>
      <div style="text-align:right">
        <div class="avg-lab">Tendenz ggü. den 4 Wochen davor</div>
-       ${chip}
+       ${trendChip(s)}
      </div>`;
+}
+function renderTxAvg(){
+  const s=avgDailyStats(activeAccts);
+  document.getElementById('txAvg').innerHTML=
+    `<span>Ø Einnahmen / Tag · letzte 4 Wochen:</span> <b>${money(s.curAvg)}</b> ${trendChip(s)}
+     <span style="color:var(--muted)">· ${fmtEUR0.format(s.curInc)} in 28 Tagen</span>`;
+}
+function renderTimeline(list){
+  const el=document.getElementById('timeline'), rd=document.getElementById('tlReadout');
+  const months={};
+  list.forEach(t=>{const k=t.date.getFullYear()+'-'+String(t.date.getMonth()+1).padStart(2,'0');months[k]=(months[k]||0)+t.amount;});
+  const keys=Object.keys(months).sort();
+  if(keys.length<2){el.innerHTML='<div class="hint" style="padding:10px">Zu wenige Daten für einen Verlauf.</div>';rd.innerHTML='';return;}
+  const vals=keys.map(k=>months[k]);
+  const maxV=Math.max(...vals,0), minV=Math.min(...vals,0), span=(maxV-minV)||1;
+  const W=Math.max(keys.length*72,320), H=240, padL=10,padR=10, top=52, botAxis=H-30;
+  const x=i=>padL+i*((W-padL-padR)/(keys.length-1));
+  const y=v=>top+(maxV-v)/span*(botAxis-top);
+  const zeroY=y(0);
+  const monShort=k=>{const[Y,m]=k.split('-');return new Intl.DateTimeFormat('de-DE',{month:'short'}).format(new Date(Y,m-1,1))+(m==='01'?" '"+Y.slice(2):'');};
+  const monFull=k=>{const[Y,m]=k.split('-');return new Intl.DateTimeFormat('de-DE',{month:'long',year:'numeric'}).format(new Date(Y,m-1,1));};
+  const pts=keys.map((k,i)=>`${x(i)},${y(months[k])}`).join(' ');
+  const area=`${padL},${zeroY} ${pts} ${x(keys.length-1)},${zeroY}`;
+  let svg=`<svg id="tlSvg" viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px">`;
+  svg+=`<polygon points="${area}" fill="var(--accent-soft)" opacity="0.5"/>`;
+  svg+=`<line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="var(--baseline)" stroke-dasharray="3 3"/>`;
+  svg+=`<polyline points="${pts}" fill="none" stroke="var(--brand-blue)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+  keys.forEach((k,i)=>{const v=months[k];svg+=`<circle cx="${x(i)}" cy="${y(v)}" r="3.4" fill="${v>=0?'var(--pos)':'var(--neg)'}"/>`;});
+  svg+=`<line id="tlCross" x1="0" y1="${top}" x2="0" y2="${botAxis}" stroke="var(--baseline)" style="opacity:0"/>`;
+  svg+=`<circle id="tlDot" r="6" fill="var(--brand-blue)" stroke="var(--surface)" stroke-width="2.5" style="opacity:0"/>`;
+  keys.forEach((k,i)=>{ if(i%Math.ceil(keys.length/14)===0||i===keys.length-1) svg+=`<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="10" fill="var(--muted)">${monShort(k)}</text>`; });
+  const w=(W-padL-padR)/(keys.length-1);
+  keys.forEach((k,i)=>{svg+=`<rect class="tlhit" data-i="${i}" x="${x(i)-w/2}" y="0" width="${w}" height="${botAxis}" fill="transparent"/>`;});
+  svg+=`</svg>`;
+  el.innerHTML=`<div style="overflow-x:auto">${svg}</div>`;
+  const setRead=(i)=>{const k=keys[i],v=months[k];
+    rd.innerHTML=`<span class="tl-m">${monFull(k)}</span><span class="tl-v" style="color:${v>=0?'var(--pos-text)':'var(--neg)'}">${v>=0?'+':''}${money(v)}</span>`;
+    const dot=document.getElementById('tlDot'),cr=document.getElementById('tlCross');
+    dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(v));dot.style.opacity=1;
+    cr.setAttribute('x1',x(i));cr.setAttribute('x2',x(i));cr.style.opacity=1;};
+  el.querySelectorAll('.tlhit').forEach(r=>{r.onmouseenter=()=>setRead(+r.dataset.i);});
+  setRead(keys.length-1); // por defecto, el último mes
 }
 function renderOverview(){
   renderOvChips();
@@ -860,6 +920,7 @@ function renderOverview(){
   renderYear(ovList);
   renderTypePie(ovList);
   renderCashflow(ovList);
+  renderTimeline(ovList);
   // ---- balances (cumulative, respect only account selection) ----
   const grid=document.getElementById('tileGrid');
   const shown=accounts.filter(a=>ovAccts.has(a.id));
