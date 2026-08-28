@@ -843,7 +843,7 @@ function avgDailyStats(acctSet){
   transactions.forEach(t=>{
     if(t.amount<=0)return;
     if(!acctSet.has(t.accountId))return;
-    if(hideInternal&&t.internal)return;
+    if(t.internal)return; // transferencias internas nunca cuentan como ingreso
     const d=t.date.getTime();
     if(d>=cur0&&d<=refT) curInc+=t.amount;
     else if(d>=prev0&&d<=prev1) prevInc+=t.amount;
