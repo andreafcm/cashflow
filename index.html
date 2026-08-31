@@ -837,21 +837,31 @@ function renderTypePie(list){
 // Ø Einnahmen/Tag de las últimas 4 semanas (28 días) vs. las 4 semanas anteriores.
 // Ventana fija desde la fecha más reciente; respeta el set de cuentas y "internas ocultas".
 function avgDailyStats(acctSet){
-  const DAY=86400000, refT=new Date(NOW.getFullYear(),NOW.getMonth(),NOW.getDate()).getTime();
-  const cur0=refT-27*DAY, prev0=refT-55*DAY, prev1=refT-28*DAY;
+  const midnight = ts => { const d=new Date(ts); return new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(); };
+  const dayShift = (ts,n) => { const d=new Date(ts); d.setDate(d.getDate()+n); return midnight(d.getTime()); };
+  // los findes cuentan en el lunes siguiente: sábado +2 días, domingo +1
+  const eff = ts => { const d=new Date(ts); const wd=d.getDay(); if(wd===6)d.setDate(d.getDate()+2); else if(wd===0)d.setDate(d.getDate()+1); return midnight(d.getTime()); };
+  // ancla: último día efectivo con movimiento en KT o HVB (al menos una); si falta, hoy
+  let anchor=0;
+  transactions.forEach(t=>{ if(t.accountId==='KT'||t.accountId==='HVB'){ const d=eff(t.date.getTime()); if(d>anchor)anchor=d; } });
+  const refT = anchor?anchor:midnight(NOW.getTime());
+  const cur0=dayShift(refT,-27), prev1=dayShift(refT,-28), prev0=dayShift(refT,-55);
   let curInc=0, prevInc=0;
   transactions.forEach(t=>{
     if(t.amount<=0)return;
     if(!acctSet.has(t.accountId))return;
     if(t.internal)return; // transferencias internas nunca cuentan como ingreso
-    const d=t.date.getTime();
+    const d=eff(t.date.getTime()); // fin de semana -> lunes siguiente (no se pierde)
     if(d>=cur0&&d<=refT) curInc+=t.amount;
     else if(d>=prev0&&d<=prev1) prevInc+=t.amount;
   });
-  const curAvg=curInc/28, prevAvg=prevInc/28;
+  // dividir entre los días hábiles reales de cada ventana de 4 semanas (Mo–Fr)
+  const countWD=(s,e)=>{let n=0;let c=new Date(s);while(c.getTime()<=e){const wd=c.getDay();if(wd>=1&&wd<=5)n++;c.setDate(c.getDate()+1);}return n;};
+  const curDays=countWD(cur0,refT), prevDays=countWD(prev0,prev1);
+  const curAvg=curDays?curInc/curDays:0, prevAvg=prevDays?prevInc/prevDays:0;
   let pct=null,cls='flat',arr='→';
   if(prevAvg>0){pct=(curAvg-prevAvg)/prevAvg*100;cls=pct>0.5?'up':(pct<-0.5?'down':'flat');arr=pct>0.5?'▲':(pct<-0.5?'▼':'→');}
-  return {curInc,curAvg,prevAvg,pct,cls,arr};
+  return {curInc,curAvg,prevAvg,pct,cls,arr,curDays,refT};
 }
 function trendChip(s){
   if(s.prevAvg<=0&&s.curAvg<=0)return `<span class="trend flat">— keine Daten</span>`;
@@ -862,9 +872,9 @@ function renderAvgDaily(){
   const s=avgDailyStats(ovAccts);
   document.getElementById('avgDailyCard').innerHTML=
     `<div>
-       <div class="avg-lab">Ø Einnahmen pro Tag · letzte 4 Wochen</div>
+       <div class="avg-lab">Ø Einnahmen pro Werktag · letzte 4 Wochen</div>
        <div class="avg-val tnum" style="color:var(--pos-text)">${money(s.curAvg)}</div>
-       <div class="avg-sub">${fmtEUR0.format(s.curInc)} in 28 Tagen · zuvor ${money(s.prevAvg)}/Tag</div>
+       <div class="avg-sub">${fmtEUR0.format(s.curInc)} an ${s.curDays} Werktagen (bis ${new Date(s.refT).toLocaleDateString('de-DE')}) · zuvor ${money(s.prevAvg)}/Werktag</div>
      </div>
      <div style="text-align:right">
        <div class="avg-lab">Tendenz ggü. den 4 Wochen davor</div>
@@ -874,8 +884,8 @@ function renderAvgDaily(){
 function renderTxAvg(){
   const s=avgDailyStats(activeAccts);
   document.getElementById('txAvg').innerHTML=
-    `<span>Ø Einnahmen / Tag · letzte 4 Wochen:</span> <b>${money(s.curAvg)}</b> ${trendChip(s)}
-     <span style="color:var(--muted)">· ${fmtEUR0.format(s.curInc)} in 28 Tagen</span>`;
+    `<span>Ø Einnahmen / Werktag · letzte 4 Wochen:</span> <b>${money(s.curAvg)}</b> ${trendChip(s)}
+     <span style="color:var(--muted)">· ${fmtEUR0.format(s.curInc)} an ${s.curDays} Werktagen (bis ${new Date(s.refT).toLocaleDateString('de-DE')})</span>`;
 }
 function renderTimeline(list){
   const el=document.getElementById('timeline'), rd=document.getElementById('tlReadout');
